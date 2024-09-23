@@ -27,7 +27,6 @@ import pandas as pd
 
 
 def display_missing_values(data):
-    st.subheader("Missing Values")
     missing_values_count = data.isnull().sum()
     missing_values_count = missing_values_count[missing_values_count > 0]  # Filter columns with missing values
     if missing_values_count.empty:
@@ -36,7 +35,6 @@ def display_missing_values(data):
         st.write("Number of missing values for each column:")
         mvalues_df = missing_values_count.reset_index()
         mvalues_df.columns = ['Column Name', 'Missing Value Count']
-        st.write(mvalues_df)
         return mvalues_df
 
 # def convert_data_types(data, column_mapping):
@@ -73,10 +71,7 @@ def display_missing_values(data):
 # def save_df_version(df,label):
 #     st.session_state.df_version[label] = df
 
-@st.fragment
-def handle_missing_vals(df, method):
-
-    mvalues_df = display_missing_values(df)
+def handle_missing_vals(df, method, mvalues_df):
     if method == 1:
         df.dropna(inplace=True)
     else:   
@@ -126,11 +121,7 @@ def handle_missing_vals(df, method):
                 except ValueError as e:
                     st.error(f"Error imputing missing values for selected columns: {e}")
                 st.session_state['column_mapping_for_imputation'] = {}
-                st.rerun(scope="fragment")
-
-
-    
-  
+                return df
 
 
 def show_summary(df):
@@ -147,25 +138,12 @@ def show_summary(df):
     dtype_counts = df.dtypes.value_counts().reset_index()
     dtype_counts.columns = ["Dtype", "Column Count"]
 
-    # Display the summary in a table format
-    st.header("Summary of the Data:",divider=True)
-
-    col1, col2 = st.columns([3,2])
-    with col1:
-        st.dataframe(summary_df)
-
-    # Display the count of columns by dtype
-    with col2:
-        st.write("Count of Columns by Data type:")
-        st.dataframe(dtype_counts)
-
-        st.write("Dataset Size: ")
-        size_df = {
+    size_df = {
             "Axis" : ["Samples","Features"],
             "Count": [df.shape[0], df.shape[1]]
         }
-        size_df = pd.DataFrame(size_df)
-        st.dataframe(size_df)
+
+    return summary_df, dtype_counts, size_df
 
 def show_unique_values(df,columns):
     # Create a list to store the summary data
@@ -192,7 +170,10 @@ def show_unique_values(df,columns):
     # Display the summary in a table format
     st.dataframe(uniq_val_df)
 
+uf = None
+
 def main():
+    global uf
 
     if 'column_mapping_for_imputation' not in st.session_state:
         st.session_state['column_mapping_for_imputation'] = {}
@@ -203,30 +184,41 @@ def main():
     if "outputs" not in st.session_state:
         st.session_state.outputs = []
 
-    # if "df_version" not in st.session_state:
-    #     st.session_state.df_version = {}
-
     if 'uploaded_file' not in st.session_state:
         st.session_state['uploaded_file'] = None
+
+    if 'df' not in st.session_state:
+        st.session_state['df'] = None
+
 
     st.title("No-Code ML Model Building App")
     
     st.session_state['uploaded_file'] = st.sidebar.file_uploader("Upload your data in CSV file format")
-
-
-
     if st.session_state['uploaded_file'] is not None:
-        
-        if 'df' not in st.session_state:
+        if st.session_state['df'] is None:
             st.session_state['df'] = pd.read_csv(st.session_state['uploaded_file'])
-        else:
-            st.write("Uploaded Data:")
-            st.dataframe(st.session_state['df'], use_container_width=True)
+        st.write("Uploaded Data:")
+        df_placeholder = st.empty()
+        df_placeholder.dataframe(st.session_state['df'], use_container_width=True)
 
-            numerical_columns = st.session_state['df'].select_dtypes(include=['int64', 'float64']).columns
-            categorical_columns = [x for x in st.session_state['df'].columns if x not in numerical_columns]
+        numerical_columns = st.session_state['df'].select_dtypes(include=['int64', 'float64']).columns
+        categorical_columns = [x for x in st.session_state['df'].columns if x not in numerical_columns]
 
-            show_summary(st.session_state['df'])
+        a,b,c = show_summary(st.session_state['df'])
+        col1, col2 = st.columns([3,2])
+        with col1:
+            sum_placeholder1 = st.empty()
+            sum_placeholder1.dataframe(a)
+
+        # Display the count of columns by dtype
+        with col2:
+            st.write("Count of Columns by Data type:")
+            sum_placeholder2 = st.empty()
+            sum_placeholder2.dataframe(b)
+
+            st.write("Dataset Size: ")
+            sum_placeholder3 = st.empty()
+            sum_placeholder3.dataframe(c)
         
         task = st.sidebar.selectbox("Choose Task:", ['Clean Data', 'Data Analysis and Visualization','Model Building',"Change Data Version"])
 
@@ -235,13 +227,30 @@ def main():
             miss_val_handling = st.sidebar.checkbox("Handle Missing Values")
             if miss_val_handling:
                 st.subheader("Missing Values Handling")
+                mval_df_placeholder = st.empty()
+                mvalues_df = display_missing_values(st.session_state['df'])
+                mval_df_placeholder.dataframe(mvalues_df)
                 miss_val_handling_method = st.selectbox("Choose method for handling missing values",
                 options = ["Select","Drop all the rows with missing value in any of it's colums","Imputation"])
 
                 if miss_val_handling_method == "Drop all the rows with missing value in any of it's colums":
-                    handle_missing_vals(st.session_state['df'],1)
+                    handle_missing_vals(st.session_state['df'],1,mvalues_df)
+                    df_placeholder.dataframe(st.session_state['df'])
+                    a,b,c = show_summary(st.session_state['df'])
+                    sum_placeholder1.dataframe(a)
+                    sum_placeholder2.dataframe(b)
+                    sum_placeholder3.dataframe(c)
+                    mvalues_df = display_missing_values(st.session_state['df'])
+                    mval_df_placeholder.dataframe(mvalues_df)
                 elif miss_val_handling_method == "Imputation":
-                    handle_missing_vals(st.session_state['df'],2)
+                    handle_missing_vals(st.session_state['df'],2,mvalues_df)
+                    df_placeholder.dataframe(st.session_state['df'])
+                    a,b,c = show_summary(st.session_state['df'])
+                    sum_placeholder1.dataframe(a)
+                    sum_placeholder2.dataframe(b)
+                    sum_placeholder3.dataframe(c)
+                    mvalues_df = display_missing_values(st.session_state['df'])
+                    mval_df_placeholder.dataframe(mvalues_df)
 
         
         # # Display data summary
