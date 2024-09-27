@@ -1,11 +1,45 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+from scipy import stats
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_selection import chi2, f_classif, mutual_info_classif
 from scipy.stats import pointbiserialr
+
+def update_view(df,p1,p2,p3,p4):
+    p1.dataframe(df)
+    a,b,c = show_summary(df)
+    p2.dataframe(a)
+    p3.dataframe(b)
+    p4.dataframe(c)
+    
+
+
+
+
+def show_summary(df):
+    # Extract summary information manually
+    summary = {
+        "Column": df.columns,
+        "Non-Null Count": [df[col].notnull().sum() for col in df.columns],
+        "Dtype": [df[col].dtype for col in df.columns]
+    }
+    # Create a DataFrame for the summary
+    summary_df = pd.DataFrame(summary)
+
+    # Count of columns by dtype
+    dtype_counts = df.dtypes.value_counts().reset_index()
+    dtype_counts.columns = ["Dtype", "Column Count"]
+
+    size_df = {
+            "Axis" : ["Samples","Features"],
+            "Count": [df.shape[0], df.shape[1]]
+        }
+
+    return summary_df, dtype_counts, size_df
 
 
 def get_missing_values_df(data):
@@ -72,28 +106,6 @@ def handle_missing_vals(df, method, mvalues_df):
                 st.session_state['column_mapping_for_imputation'] = {}
                 return df
 
-
-def show_summary(df):
-    # Extract summary information manually
-    summary = {
-        "Column": df.columns,
-        "Non-Null Count": [df[col].notnull().sum() for col in df.columns],
-        "Dtype": [df[col].dtype for col in df.columns]
-    }
-    # Create a DataFrame for the summary
-    summary_df = pd.DataFrame(summary)
-
-    # Count of columns by dtype
-    dtype_counts = df.dtypes.value_counts().reset_index()
-    dtype_counts.columns = ["Dtype", "Column Count"]
-
-    size_df = {
-            "Axis" : ["Samples","Features"],
-            "Count": [df.shape[0], df.shape[1]]
-        }
-
-    return summary_df, dtype_counts, size_df
-
 def get_unique_values_df(df,columns):
     # Create a list to store the summary data
     uniq_val_data = []
@@ -118,6 +130,8 @@ def get_unique_values_df(df,columns):
     
     return uniq_val_df
 
+def replace(df, col, old, new):
+    df[col].replace(old, new, inplace = True)
 
 def change_data_type(df):
     disp_col_name = []
@@ -163,6 +177,51 @@ def change_data_type(df):
             st.error(f"Error converting selected columns to their specified data types: {e}")
 
         st.session_state['column_mapping_for_conversion'] = {}
+
+def rem_outliers(df, col_options):
+    disp_col_name = []
+    disp_method_name = []
+    threshold = 3 # for z-score
+    column_group = st.multiselect("Select columns for outlier removal:", options=col_options)
+    or_method = st.selectbox("Select method for selected columns", options=["IQR", "Z-Score"])
+    if st.button("Add") and column_group:
+        if or_method in st.session_state['column_mapping_for_or'].keys():
+            st.session_state['column_mapping_for_or'][or_method] += column_group
+        else:
+            st.session_state['column_mapping_for_or'][or_method] = column_group
+
+    if st.button("Reset Selection"):
+        st.session_state['column_mapping_for_or'] = {}
+
+    for mthd, c_group in st.session_state['column_mapping_for_or'].items():
+        for c_name in c_group:
+            if c_name not in disp_col_name:
+                disp_col_name.append(c_name)
+                disp_method_name.append(mthd)
+    
+    st.dataframe(pd.DataFrame({"Column":disp_col_name,
+                            "Method":disp_method_name}))
+    if st.button("Remove Outliers") and len(st.session_state['column_mapping_for_or'])!=0:
+        try:
+            for met, columns in st.session_state['column_mapping_for_or'].items():
+                for col in columns:
+                    if met == "IQR":
+                        Q1 = df[col].quantile(0.25)
+                        Q3 = df[col].quantile(0.75)
+                        IQR = Q3 - Q1
+                        df = df[(df[col] >= (Q1 - 1.5 * IQR)) & (df[col] <= (Q3 + 1.5 * IQR))]
+                    elif met == "Z-Score":
+                        z_scores = np.abs(stats.zscore(df[col]))
+                        df =  df[z_scores < threshold]
+            outputs = ""
+            for met, columns in st.session_state['column_mapping_for_or'].items():
+                outputs += f"Outliers were removed from columns: {(', ').join(columns)} using {met} technique and "
+            st.session_state.outputs.append(outputs[:-4]+"!")
+
+        except ValueError as e:
+            st.error(f"Error converting selected columns to their specified data types: {e}")
+
+        st.session_state['column_mapping_for_or'] = {}
 
 def show_outlier_detection(df, numerical_columns, method, target_cls=""):
     
@@ -357,6 +416,9 @@ if 'column_mapping_for_imputation' not in st.session_state:
 if 'column_mapping_for_conversion' not in st.session_state:
     st.session_state['column_mapping_for_conversion'] = {}
 
+if 'column_mapping_for_or' not in st.session_state:
+    st.session_state['column_mapping_for_or'] = {}
+
 if "outputs" not in st.session_state:
     st.session_state.outputs = []
 
@@ -366,10 +428,16 @@ if 'uploaded_file' not in st.session_state:
 if 'df' not in st.session_state:
     st.session_state['df'] = None
 
+changed = False
 
 st.title("No-Code ML Model Building App")
 
 st.session_state['uploaded_file'] = st.sidebar.file_uploader("Upload your data in CSV file format")
+
+st.sidebar.write("Please rerun if you change your data")
+if st.sidebar.button("Rerun"):
+    st.session_state.clear()
+    st.rerun()
 if st.session_state['uploaded_file'] is not None:
     if st.session_state['df'] is None:
         st.session_state['df'] = pd.read_csv(st.session_state['uploaded_file'])
@@ -396,7 +464,7 @@ if st.session_state['uploaded_file'] is not None:
         sum_placeholder3 = st.empty()
         sum_placeholder3.dataframe(c)
     
-    task = st.sidebar.selectbox("Choose Task:", ['Clean Data', 'Data Analysis and Visualization','Model Building',"Change Data Version"])
+    task = st.sidebar.selectbox("Choose Task:", ['Select', 'Clean Data', 'Data Analysis and Visualization','Model Building',"Change Data Version"])
 
     if task == 'Clean Data':
         st.subheader("Data Cleaning",divider=True)
@@ -415,51 +483,50 @@ if st.session_state['uploaded_file'] is not None:
 
                 if miss_val_handling_method == "Drop all the rows with missing value in any of it's colums":
                     handle_missing_vals(st.session_state['df'],1,mvalues_df)
-                    df_placeholder.dataframe(st.session_state['df'])
-                    a,b,c = show_summary(st.session_state['df'])
-                    sum_placeholder1.dataframe(a)
-                    sum_placeholder2.dataframe(b)
-                    sum_placeholder3.dataframe(c)
+                    update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
                     mvalues_df = get_missing_values_df(st.session_state['df'])
                     mval_df_placeholder.dataframe(mvalues_df)
                 elif miss_val_handling_method == "Imputation":
                     handle_missing_vals(st.session_state['df'],2,mvalues_df)
-                    df_placeholder.dataframe(st.session_state['df'])
-                    a,b,c = show_summary(st.session_state['df'])
-                    sum_placeholder1.dataframe(a)
-                    sum_placeholder2.dataframe(b)
-                    sum_placeholder3.dataframe(c)
+                    update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
                     mvalues_df = get_missing_values_df(st.session_state['df'])
                     mval_df_placeholder.dataframe(mvalues_df)
 
+        replace_val = st.sidebar.checkbox("Replace Values")
         change_dt = st.sidebar.checkbox("Change Column Data Types")
-        if change_dt:
-            st.subheader("Changing Data types of columns")
+
+        if replace_val or change_dt:
             uni_val_df_placeholder = st.empty()
             uni_val_df_placeholder.dataframe(get_unique_values_df(st.session_state['df'],st.session_state['df'].columns))
-            change_data_type(st.session_state['df'])
-            uni_val_df_placeholder.dataframe(get_unique_values_df(st.session_state['df'],st.session_state['df'].columns))
 
-    
-    if task == "Data Analysis and Visualization":
-        st.subheader("Data Analysis and Visualization",divider=True)
-        st.sidebar.header("Choose Tasks")
-        unique_values = st.sidebar.checkbox("Unique Values")
-        outlier_detection = st.sidebar.checkbox("Outlier Detection")
-        EDA = st.sidebar.checkbox("EDA")
-        feat_impt = st.sidebar.checkbox("Measure Feature Importance")
+            if replace_val:
+                st.subheader("Replace values in columns",divider=True)
+                rep_col = st.selectbox("Choose the column for transformation", options = st.session_state['df'].columns)
 
-        if unique_values:
-            st.header("Unique Values:",divider=True)
-            col_list_for_unique_vals = st.multiselect("Select Columns for Displaying Unique Values", options=st.session_state['df'].columns)
-            uni_val_df_placeholder = st.empty()
-            if col_list_for_unique_vals:
-                uni_val_df_placeholder.dataframe(get_unique_values_df(st.session_state['df'],col_list_for_unique_vals))
-            else:
-                st.write("Please select at least one column to display its details.")
+                if rep_col:
+                    rep_val = st.multiselect("Choose the value for replacing", options = st.session_state['df'][rep_col].unique())
+                    if rep_val:
+                        new_val = st.text_input("Enter the new value: ")
+                        if st.button("Replace"):
+                            if rep_col in numerical_columns and st.session_state['df'][rep_col].dtype == 'int64':
+                                replace(st.session_state['df'], rep_col, rep_val, int(new_val))
+                            elif rep_col in numerical_columns and st.session_state['df'][rep_col].dtype == 'float64':
+                                replace(st.session_state['df'], rep_col, rep_val, float(new_val))
+                            else:
+                                replace(st.session_state['df'], rep_col, rep_val, new_val)
+                            update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
+                            uni_val_df_placeholder.dataframe(get_unique_values_df(st.session_state['df'],st.session_state['df'].columns))
 
-        if outlier_detection:
-            st.header("Outlier Detection:",divider=True)
+            if change_dt:
+                st.subheader("Changing Data types of columns",divider=True)
+                change_data_type(st.session_state['df'])
+                update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
+                uni_val_df_placeholder.dataframe(get_unique_values_df(st.session_state['df'],st.session_state['df'].columns))
+
+
+        outlier_d_r = st.sidebar.checkbox("Outlier Detection and Removal")
+        if outlier_d_r:
+            st.subheader("Outlier Detection:",divider=True)
             target_cls = st.selectbox("Select Target Class against which you want to perform outlier detection", options=st.session_state['df'].columns)
             numerical_columns_stats = st.checkbox("Show Statistics of Numerical Attributes by target class for Outlier Detection")
             if numerical_columns_stats:
@@ -472,6 +539,31 @@ if st.session_state['uploaded_file'] is not None:
                     show_outlier_detection(st.session_state['df'],col_list_for_otl_detection,1)
                 else:
                     st.write("Please select at least one column to visualize.")
+
+            outlier_r = st.checkbox("Remove Outliers")
+            if outlier_r:
+                rem_outliers(st.session_state['df'], numerical_columns)
+                update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
+                
+
+    
+    if task == "Data Analysis and Visualization":
+        st.subheader("Data Analysis and Visualization",divider=True)
+        st.sidebar.header("Choose Tasks")
+        unique_values = st.sidebar.checkbox("Unique Values")
+        EDA = st.sidebar.checkbox("EDA")
+        feat_impt = st.sidebar.checkbox("Measure Feature Importance")
+
+        if unique_values:
+            st.header("Unique Values:",divider=True)
+            col_list_for_unique_vals = st.multiselect("Select Columns for Displaying Unique Values", options=st.session_state['df'].columns)
+            uni_val_df_placeholder = st.empty()
+            if col_list_for_unique_vals:
+                uni_val_df_placeholder.dataframe(get_unique_values_df(st.session_state['df'],col_list_for_unique_vals))
+            else:
+                st.write("Please select at least one column to display its details.")
+
+
             
 
         if EDA:
