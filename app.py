@@ -4,6 +4,7 @@ import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_selection import chi2, f_classif, mutual_info_classif
@@ -32,7 +33,7 @@ def show_summary(df):
 
     size_df = {
             "Axis" : ["Samples","Features"],
-            "Count": [df.shape[0], df.shape[1]]
+            "Count": [0 if df.shape[1]==0 else df.shape[0], df.shape[1]]
         }
 
     return summary_df, dtype_counts, size_df
@@ -409,6 +410,75 @@ def drop_cols(df):
             df.drop(cols_to_drop, axis=1, inplace=True)
             st.success("Dropped!")
 
+def generate_train_test_data(df):
+    test_size = st.slider("Select Test Size (in %):", min_value=5.0, max_value=95.0, step=5.0)
+    if st.checkbox("split into train and test data"):
+        train_df, test_df = train_test_split(df, test_size=test_size/100, random_state=42)
+        train_df = train_df.reset_index(drop=True)
+        test_df = test_df.reset_index(drop=True)
+        colt, colts = st.columns(2, gap='small')
+        with colt:
+            trb = st.button("Show Training Data Summary")
+        with colts:
+            tsb = st.button('Show Testing Data summary')
+        
+        if trb:
+            a,b,c = show_summary(train_df)
+            st.write("Overview of Training Data")
+            st.dataframe(train_df.head())
+            st.write("Summary of Training Data")
+            col1, col2 = st.columns([3,2])
+            with col1:
+                sum_placeholder1 = st.empty()
+                sum_placeholder1.dataframe(a)
+
+            with col2:
+                st.write("Count of Columns by Data type:")
+                sum_placeholder2 = st.empty()
+                sum_placeholder2.dataframe(b)
+
+                st.write("Dataset Size: ")
+                sum_placeholder3 = st.empty()
+                sum_placeholder3.dataframe(c)
+        if tsb:
+            a,b,c = show_summary(test_df)
+            st.write("Overview of Testing Data")
+            st.dataframe(test_df.head())
+            st.write("Summary of Testing Data")
+            col1, col2 = st.columns([3,2])
+            with col1:
+                sum_placeholder1 = st.empty()
+                sum_placeholder1.dataframe(a)
+
+            with col2:
+                st.write("Count of Columns by Data type:")
+                sum_placeholder2 = st.empty()
+                sum_placeholder2.dataframe(b)
+
+                st.write("Dataset Size: ")
+                sum_placeholder3 = st.empty()
+                sum_placeholder3.dataframe(c)
+        
+        
+        coldt, coldts = st.columns(2, gap="small")
+        with coldt:
+            st.download_button(
+                label="Download Train Data as CSV",
+                data=train_df.to_csv(index=False).encode('utf-8'),
+                file_name='train_data.csv',
+                mime='text/csv',
+            )
+        with coldts:
+            st.download_button(
+                label="Download Test Data as CSV",
+                data=test_df.to_csv(index=False).encode('utf-8'),
+                file_name='test_data.csv',
+                mime='text/csv',
+            )
+        
+
+
+
 if 'column_mapping_for_imputation' not in st.session_state:
     st.session_state['column_mapping_for_imputation'] = {}
 
@@ -427,7 +497,8 @@ if 'uploaded_file' not in st.session_state:
 if 'df' not in st.session_state:
     st.session_state['df'] = None
 
-changed = False
+
+# changed = False
 
 st.title("No-Code ML Model Building App")
 
@@ -599,9 +670,13 @@ if st.session_state['uploaded_file'] is not None:
             st.subheader("Drop Irrelevant Features",divider=True)
             drop_cols(st.session_state['df'])
             update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
+        tr_ts_split = st.sidebar.checkbox("Get train and test data")
+        if tr_ts_split:
+            st.subheader("Generate Train and Test Split", divider=True)
+            generate_train_test_data(st.session_state['df'])
         handle_cls_imbalance = st.sidebar.checkbox("Handle Class Imbalance")
         norm_encode_cols = st.sidebar.checkbox("Normalize Numerical Attributes and Encode Categorical Features")
-        tr_ts_split = st.sidebar.checkbox("Get train and test data")
+        
 
     st.subheader("Notes Section", divider=True)
     user_notes = st.text_area("Take your notes here:", key="user_notes", height=200)
