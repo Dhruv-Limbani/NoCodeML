@@ -16,10 +16,6 @@ def update_view(df,p1,p2,p3,p4):
     p3.dataframe(b)
     p4.dataframe(c)
     
-
-
-
-
 def show_summary(df):
     # Extract summary information manually
     summary = {
@@ -41,7 +37,6 @@ def show_summary(df):
 
     return summary_df, dtype_counts, size_df
 
-
 def get_missing_values_df(data):
     missing_values_count = data.isnull().sum()
     missing_values_count = missing_values_count[missing_values_count > 0]  # Filter columns with missing values
@@ -51,7 +46,6 @@ def get_missing_values_df(data):
         mvalues_df = missing_values_count.reset_index()
         mvalues_df.columns = ['Column Name', 'Missing Value Count']
         return mvalues_df
-
 
 def handle_missing_vals(df, method, mvalues_df):
     if method == 1:
@@ -244,7 +238,6 @@ def show_outlier_detection(df, numerical_columns, method, target_cls=""):
         stats = df.groupby(target_cls).describe().T
         st.dataframe(stats)
 
-
 def bivariate_categorical(df, col1, col2):
     fig, axes = plt.subplots(1,2,figsize=(15,4))
     ct = pd.crosstab(df[col2],df[col1], normalize = 'index')
@@ -321,7 +314,6 @@ def show_EDA(df, columns, method):
         a.set_xticklabels(a.get_xticklabels(), rotation=90)
         a = a.set_title('Correlation within Attributes')
         st.pyplot(fig)
-
 
 def show_feat_impt(df, columns, target, method):
     if method==0:
@@ -410,6 +402,13 @@ def show_feat_impt(df, columns, target, method):
             a = a.set_title("Feature Importance")
             st.pyplot(fig)
 
+def drop_cols(df):
+    cols_to_drop = st.multiselect("Select columns to drop", options=df.columns)
+    if cols_to_drop:
+        if st.button("Drop"):
+            df.drop(cols_to_drop, axis=1, inplace=True)
+            st.success("Dropped!")
+
 if 'column_mapping_for_imputation' not in st.session_state:
     st.session_state['column_mapping_for_imputation'] = {}
 
@@ -454,7 +453,6 @@ if st.session_state['uploaded_file'] is not None:
         sum_placeholder1 = st.empty()
         sum_placeholder1.dataframe(a)
 
-    # Display the count of columns by dtype
     with col2:
         st.write("Count of Columns by Data type:")
         sum_placeholder2 = st.empty()
@@ -464,7 +462,7 @@ if st.session_state['uploaded_file'] is not None:
         sum_placeholder3 = st.empty()
         sum_placeholder3.dataframe(c)
     
-    task = st.sidebar.selectbox("Choose Task:", ['Select', 'Clean Data', 'Data Analysis and Visualization','Model Building',"Change Data Version"])
+    task = st.sidebar.selectbox("Choose Task:", ['Select', 'Clean Data', 'Data Analysis and Visualization','Prepare Data for Model','Model Building'])
 
     if task == 'Clean Data':
         st.subheader("Data Cleaning",divider=True)
@@ -523,7 +521,6 @@ if st.session_state['uploaded_file'] is not None:
                 update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
                 uni_val_df_placeholder.dataframe(get_unique_values_df(st.session_state['df'],st.session_state['df'].columns))
 
-
         outlier_d_r = st.sidebar.checkbox("Outlier Detection and Removal")
         if outlier_d_r:
             st.subheader("Outlier Detection:",divider=True)
@@ -544,9 +541,17 @@ if st.session_state['uploaded_file'] is not None:
             if outlier_r:
                 rem_outliers(st.session_state['df'], numerical_columns)
                 update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
-                
 
-    
+        download_cleaned_data = st.sidebar.checkbox("Download Cleaned Data")
+        
+        if download_cleaned_data:
+            st.download_button(
+            label="Download cleaned CSV",
+            data=st.session_state['df'].to_csv(index=False).encode('utf-8'),
+            file_name='cleaned_data.csv',
+            mime='text/csv',
+        )
+                    
     if task == "Data Analysis and Visualization":
         st.subheader("Data Analysis and Visualization",divider=True)
         st.sidebar.header("Choose Tasks")
@@ -562,10 +567,7 @@ if st.session_state['uploaded_file'] is not None:
                 uni_val_df_placeholder.dataframe(get_unique_values_df(st.session_state['df'],col_list_for_unique_vals))
             else:
                 st.write("Please select at least one column to display its details.")
-
-
-            
-
+ 
         if EDA:
             st.header("Exploratory Data Analysis:", divider=True)
             univar_analysis = st.checkbox("Show Univariate Analysis")
@@ -590,4 +592,25 @@ if st.session_state['uploaded_file'] is not None:
             cat_feat_impt = st.checkbox("Measure Feature Importance of Categorical Attributes")
             if cat_feat_impt:
                 show_feat_impt(st.session_state['df'],categorical_columns,target_cls_feat_impt,1)
+    
+    if task == "Prepare Data for Model":
+        drop_ir_c = st.sidebar.checkbox("Drop Irrelevant Columns")
+        if drop_ir_c:
+            st.subheader("Drop Irrelevant Features",divider=True)
+            drop_cols(st.session_state['df'])
+            update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
+        handle_cls_imbalance = st.sidebar.checkbox("Handle Class Imbalance")
+        norm_encode_cols = st.sidebar.checkbox("Normalize Numerical Attributes and Encode Categorical Features")
+        tr_ts_split = st.sidebar.checkbox("Get train and test data")
+
+    st.subheader("Notes Section", divider=True)
+    user_notes = st.text_area("Take your notes here:", key="user_notes", height=200)
+    
+    if user_notes:
+        st.download_button(
+            label="Download Notes",
+            data=user_notes,
+            file_name="data_cleaning_notes.txt",
+            mime="text/plain"
+        )
 
