@@ -9,6 +9,12 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_selection import chi2, f_classif, mutual_info_classif
 from scipy.stats import pointbiserialr
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, OrdinalEncoder, LabelEncoder
+import pickle
+import io
 
 def update_view(df,p1,p2,p3,p4):
     p1.dataframe(df)
@@ -214,7 +220,7 @@ def rem_outliers(df, col_options):
             st.session_state.outputs.append(outputs[:-4]+"!")
 
         except ValueError as e:
-            st.error(f"Error converting selected columns to their specified data types: {e}")
+            st.error(f"Error removing outliers: {e}")
 
         st.session_state['column_mapping_for_or'] = {}
 
@@ -412,10 +418,14 @@ def drop_cols(df):
 
 def generate_train_test_data(df):
     test_size = st.slider("Select Test Size (in %):", min_value=5.0, max_value=95.0, step=5.0)
-    if st.checkbox("split into train and test data"):
-        train_df, test_df = train_test_split(df, test_size=test_size/100, random_state=42)
-        train_df = train_df.reset_index(drop=True)
-        test_df = test_df.reset_index(drop=True)
+    if st.button("split into train and test data"):
+        st.session_state['train_data'], st.session_state['test_data'] = train_test_split(df, test_size=test_size/100, random_state=42)
+        st.session_state['train_data'] = st.session_state['train_data'].reset_index(drop=True)
+        st.session_state['test_data'] = st.session_state['test_data'].reset_index(drop=True)
+
+        st.success("Train and Test Data Ready")
+    
+    if st.session_state['train_data'] is not None:  
         colt, colts = st.columns(2, gap='small')
         with colt:
             trb = st.button("Show Training Data Summary")
@@ -423,9 +433,9 @@ def generate_train_test_data(df):
             tsb = st.button('Show Testing Data summary')
         
         if trb:
-            a,b,c = show_summary(train_df)
+            a,b,c = show_summary(st.session_state['train_data'])
             st.write("Overview of Training Data")
-            st.dataframe(train_df.head())
+            st.dataframe(st.session_state['train_data'].head())
             st.write("Summary of Training Data")
             col1, col2 = st.columns([3,2])
             with col1:
@@ -441,9 +451,9 @@ def generate_train_test_data(df):
                 sum_placeholder3 = st.empty()
                 sum_placeholder3.dataframe(c)
         if tsb:
-            a,b,c = show_summary(test_df)
+            a,b,c = show_summary(st.session_state['test_data'])
             st.write("Overview of Testing Data")
-            st.dataframe(test_df.head())
+            st.dataframe(st.session_state['test_data'].head())
             st.write("Summary of Testing Data")
             col1, col2 = st.columns([3,2])
             with col1:
@@ -459,24 +469,154 @@ def generate_train_test_data(df):
                 sum_placeholder3 = st.empty()
                 sum_placeholder3.dataframe(c)
         
-        
         coldt, coldts = st.columns(2, gap="small")
         with coldt:
             st.download_button(
                 label="Download Train Data as CSV",
-                data=train_df.to_csv(index=False).encode('utf-8'),
+                data=st.session_state['train_data'].to_csv(index=False).encode('utf-8'),
                 file_name='train_data.csv',
                 mime='text/csv',
             )
         with coldts:
             st.download_button(
                 label="Download Test Data as CSV",
-                data=test_df.to_csv(index=False).encode('utf-8'),
+                data=st.session_state['test_data'].to_csv(index=False).encode('utf-8'),
                 file_name='test_data.csv',
                 mime='text/csv',
             )
-        
 
+def norm_encode_feats(df):
+    disp_col_name = []
+    disp_method_name = []
+    column_group = st.multiselect("Select columns for transformation", options=df.columns)
+    method = st.selectbox("Select transformation method", options=["Label Encoding", "One-Hot Encoding", "Ordinal Encoding", "Standard Scaling", "Min-Max Scaling"])
+
+    if st.button("Add") and column_group:
+        if method in st.session_state['column_mapping_for_tr'].keys():
+            st.session_state['column_mapping_for_tr'][method] += column_group
+        else:
+            st.session_state['column_mapping_for_tr'][method] = column_group
+
+    if st.button("Reset Selection"):
+        st.session_state['column_mapping_for_tr'] = {}
+
+    transformers = []
+    for mthd, c_group in st.session_state['column_mapping_for_tr'].items():
+        if len(c_group):
+            if mthd == 'Standard Scaling':
+                transformers.append(('standard_scaler', StandardScaler(), c_group))
+            elif mthd == 'Min-Max Scaling':
+                transformers.append(('minmax_scaler', MinMaxScaler(), c_group))
+            if mthd == 'One-Hot Encoding':
+                transformers.append(('onehot_encoder', OneHotEncoder(sparse_output=False), c_group))
+            elif mthd == 'Ordinal Encoding':
+                transformers.append(('ordinal_encoder', OrdinalEncoder(), c_group))
+
+        for c_name in c_group:
+            if c_name not in disp_col_name:
+                disp_col_name.append(c_name)
+                disp_method_name.append(mthd)
+    
+    st.dataframe(pd.DataFrame({"Column":disp_col_name,
+                            "Transformation Method":disp_method_name}))
+    if st.button("Transform Columns") and len(st.session_state['column_mapping_for_tr'])!=0:
+        try:
+            original_dtypes = df.dtypes.to_dict()
+
+            st.session_state['ct'] = ColumnTransformer(
+                transformers = transformers,
+                remainder='passthrough' 
+            )
+            transformed_data = st.session_state['ct'].fit_transform(df)
+            
+            transformed_col_names = list(st.session_state['ct'].get_feature_names_out())
+            passthrough_columns = [col for col in df.columns if col not in (st.session_state['column_mapping_for_tr']['Standard Scaling'] + st.session_state['column_mapping_for_tr']['Min-Max Scaling'] + st.session_state['column_mapping_for_tr']['One-Hot Encoding'] + st.session_state['column_mapping_for_tr']['Ordinal Encoding'])]
+            
+            cleaned_column_names = []
+            for name in transformed_col_names:
+                if 'remainder__' in name:
+                    rem = 'remainder__'
+                elif 'minmax_scaler__' in name:
+                    rem = 'minmax_scaler__'
+                elif 'standard_scaler__' in name:
+                    rem = 'standard_scaler__'
+                else:
+                    rem = ''
+                cleaned_column_names.append(name.replace(rem, ''))
+
+            st.session_state['transformed_data'] = pd.DataFrame(transformed_data, columns=cleaned_column_names)
+
+            for col in st.session_state['transformed_data'].columns:
+                if col in passthrough_columns:
+                    st.session_state['transformed_data'][col] = st.session_state['transformed_data'][col].astype(original_dtypes[col])
+                elif col in (st.session_state['column_mapping_for_tr']['Standard Scaling'] + st.session_state['column_mapping_for_tr']['Min-Max Scaling']):
+                    st.session_state['transformed_data'][col] = st.session_state['transformed_data'][col].astype(float)
+            st.session_state['le'] = LabelEncoder()
+            for col in st.session_state['column_mapping_for_tr']['Label Encoding']:
+                st.session_state['transformed_data'][col] = st.session_state['le'].fit_transform(st.session_state['transformed_data'][col])
+            
+            outputs = ""
+            for met, columns in st.session_state['column_mapping_for_tr'].items():
+                outputs += f"Columns: {(', ').join(columns)} using {met} technique and "
+            st.session_state.outputs.append(outputs[:-4]+"!")
+
+            st.session_state['transformed_data']
+        except ValueError as e:
+            st.error(f"Error transforming columns: {e}")
+
+        st.session_state['column_mapping_for_tr'] = {
+            "Label Encoding": [],
+            "One-Hot Encoding": [],
+            "Ordinal Encoding": [],
+            "Standard Scaling": [], 
+            "Min-Max Scaling": []
+        }
+
+    if st.session_state['transformed_data'] is not None:          
+        if st.button("Show Transformed Data Summary"):
+            a,b,c = show_summary(st.session_state['transformed_data'])
+            st.write("Overview of Transformed Data")
+            st.dataframe(st.session_state['transformed_data'].head())
+            st.write("Summary of Transformed Data")
+            col1, col2 = st.columns([3,2])
+            with col1:
+                sum_placeholder1 = st.empty()
+                sum_placeholder1.dataframe(a)
+
+            with col2:
+                st.write("Count of Columns by Data type:")
+                sum_placeholder2 = st.empty()
+                sum_placeholder2.dataframe(b)
+
+                st.write("Dataset Size: ")
+                sum_placeholder3 = st.empty()
+                sum_placeholder3.dataframe(c)
+
+        coldata, coldtrs = st.columns(2, gap="small")
+        with coldata:
+            st.download_button(
+                label="Download Transformed Data as CSV",
+                data=st.session_state['transformed_data'].to_csv(index=False).encode('utf-8'),
+                file_name='transformed_data.csv',
+                mime='text/csv',
+            )
+        with coldtrs:
+            with io.BytesIO() as buffer:
+                pickle.dump((st.session_state['ct'], st.session_state['le']), buffer)
+                buffer.seek(0)
+                st.download_button(
+                    label="Download Column Transformer and Label Encoder as Pickle file",
+                    data=buffer,
+                    file_name="columntransformer_labelencoder.pkl",
+                    mime="application/octet-stream"
+                )
+
+def handle_class_imbalane(df):
+    target_column = st.selectbox("Select the target column", df.columns)
+    sampling_technique = st.radio(
+            "Choose a sampling technique to handle class imbalance",
+            ("Oversampling (SMOTE)", "Undersampling")
+        )
 
 
 if 'column_mapping_for_imputation' not in st.session_state:
@@ -488,6 +628,15 @@ if 'column_mapping_for_conversion' not in st.session_state:
 if 'column_mapping_for_or' not in st.session_state:
     st.session_state['column_mapping_for_or'] = {}
 
+if 'column_mapping_for_tr' not in st.session_state:
+    st.session_state['column_mapping_for_tr'] = {
+        "Label Encoding": [],
+        "One-Hot Encoding": [],
+        "Ordinal Encoding": [],
+        "Standard Scaling": [], 
+        "Min-Max Scaling": []
+    }
+
 if "outputs" not in st.session_state:
     st.session_state.outputs = []
 
@@ -497,6 +646,20 @@ if 'uploaded_file' not in st.session_state:
 if 'df' not in st.session_state:
     st.session_state['df'] = None
 
+if 'transformed_data' not in st.session_state:
+    st.session_state['transformed_data'] = None
+
+if 'train_data' not in st.session_state:
+    st.session_state['train_data'] = None
+
+if 'test_data' not in st.session_state:
+    st.session_state['test_data'] = None
+
+if 'ct' not in st.session_state:
+    st.session_state['ct'] = None
+
+if 'le' not in st.session_state:
+    st.session_state['le'] = None
 
 # changed = False
 
@@ -674,16 +837,30 @@ if st.session_state['uploaded_file'] is not None:
         if tr_ts_split:
             st.subheader("Generate Train and Test Split", divider=True)
             generate_train_test_data(st.session_state['df'])
-        handle_cls_imbalance = st.sidebar.checkbox("Handle Class Imbalance")
-        norm_encode_cols = st.sidebar.checkbox("Normalize Numerical Attributes and Encode Categorical Features")
-        
 
-    st.subheader("Notes Section", divider=True)
+        norm_encode_cols = st.sidebar.checkbox("Normalize Numerical Attributes and Encode Categorical Features")
+        if norm_encode_cols:
+            st.subheader("Normalize and Encode Features", divider=True)
+            norm_encode_feats(st.session_state['df'])
+
+        handle_cls_imbalance = st.sidebar.checkbox("Handle Class Imbalance")
+        if handle_cls_imbalance:
+            st.subheader("Handle Class Imbalance (In development)", divider=True)
+            st.warning("Sorry! This feature is in development phase")
+            handle_class_imbalane(st.session_state['df'])
+
+        dim_red = st.sidebar.checkbox("Dimensionality Reduction")
+        if dim_red:
+            st.subheader("Dimensionality Reduction", divider=True)
+            st.warning("Sorry! This feature is in development phase")
+
+
+    st.subheader("Your notes", divider=True)
     user_notes = st.text_area("Take your notes here:", key="user_notes", height=200)
     
     if user_notes:
         st.download_button(
-            label="Download Notes",
+            label="Download your notes",
             data=user_notes,
             file_name="data_cleaning_notes.txt",
             mime="text/plain"
