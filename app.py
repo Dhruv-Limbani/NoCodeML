@@ -652,8 +652,7 @@ def train_model(df, task, target_col, algo):
         model.fit(x,y)
         return model
     except:
-        st.error("1")
-        return None
+        st.error("Error training the model")
 
 
 def model_training(df):
@@ -828,6 +827,14 @@ if 'target_col' not in st.session_state:
 # changed = False
 
 st.title("No-Code ML Model Building App")
+about_1 = st.empty()
+about_2 = st.empty()
+about_3 = st.empty()
+
+about_1.subheader("Developed by: Dhruv Jitendra Limbani")
+about_2.success("Graduate CS student at Columbia University, New York")
+about_3.warning('This is a ZERO-Coding Data Cleaning, Transformation, Analysis & Visualization as well as ML Model building Platform. Some of the features are under development. Please explore and have fun! Thank You')
+
 
 st.session_state['uploaded_file'] = st.sidebar.file_uploader("Upload your data in CSV file format")
 
@@ -836,6 +843,9 @@ if st.sidebar.button("Rerun"):
     st.session_state.clear()
     st.rerun()
 if st.session_state['uploaded_file'] is not None:
+    about_1.empty()
+    about_2.empty()
+    about_3.empty()
     if st.session_state['df'] is None:
         st.session_state['df'] = pd.read_csv(st.session_state['uploaded_file'])
     st.write("Uploaded Data:")
@@ -860,8 +870,13 @@ if st.session_state['uploaded_file'] is not None:
         sum_placeholder3 = st.empty()
         sum_placeholder3.dataframe(c)
     
-    task = st.sidebar.selectbox("Choose Task:", ['Select', 'Clean Data', 'Data Analysis and Visualization','Prepare Data for Model','Model Building'])
+    task = st.sidebar.selectbox("Choose Task:", ['About', 'Clean Data', 'Data Analysis and Visualization','Prepare Data for Model','Model Building'])
 
+    if task == 'About':
+        st.subheader("Developed by: Dhruv Jitendra Limbani")
+        st.success("Graduate CS student at Columbia University, New York")
+        st.warning('This is a ZERO-Coding Data Cleaning, Transformation, Analysis & Visualization as well as ML Model building Platform. Some of the features are under development. Please explore and have fun! Thank You')
+        
     if task == 'Clean Data':
         st.subheader("Data Cleaning",divider=True)
         miss_val_handling = st.sidebar.checkbox("Handle Missing Values")
