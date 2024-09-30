@@ -4,17 +4,33 @@ import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
 import seaborn as sns
+
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_selection import chi2, f_classif, mutual_info_classif
 from scipy.stats import pointbiserialr
 from imblearn.over_sampling import SMOTE
 from imblearn.under_sampling import RandomUnderSampler
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, OrdinalEncoder, LabelEncoder
+
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import GaussianNB
+
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, AdaBoostRegressor
+from sklearn.svm import SVR
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.tree import DecisionTreeRegressor
+
+from sklearn.metrics import classification_report, accuracy_score, r2_score
+
 import pickle
 import io
+
 
 def update_view(df,p1,p2,p3,p4):
     p1.dataframe(df)
@@ -488,6 +504,7 @@ def generate_train_test_data(df):
 def norm_encode_feats(df):
     disp_col_name = []
     disp_method_name = []
+    st.warning("Use Label Encoder for target column only")
     column_group = st.multiselect("Select columns for transformation", options=df.columns)
     method = st.selectbox("Select transformation method", options=["Label Encoding", "One-Hot Encoding", "Ordinal Encoding", "Standard Scaling", "Min-Max Scaling"])
 
@@ -521,7 +538,7 @@ def norm_encode_feats(df):
                             "Transformation Method":disp_method_name}))
     if st.button("Transform Columns") and len(st.session_state['column_mapping_for_tr'])!=0:
         try:
-            original_dtypes = df.dtypes.to_dict()
+            st.session_state['org_dtypes'] = df.dtypes.to_dict()
 
             st.session_state['ct'] = ColumnTransformer(
                 transformers = transformers,
@@ -530,9 +547,17 @@ def norm_encode_feats(df):
             transformed_data = st.session_state['ct'].fit_transform(df)
             
             transformed_col_names = list(st.session_state['ct'].get_feature_names_out())
-            passthrough_columns = [col for col in df.columns if col not in (st.session_state['column_mapping_for_tr']['Standard Scaling'] + st.session_state['column_mapping_for_tr']['Min-Max Scaling'] + st.session_state['column_mapping_for_tr']['One-Hot Encoding'] + st.session_state['column_mapping_for_tr']['Ordinal Encoding'])]
+
+            st.session_state['minmax_sc_cols'] = st.session_state['column_mapping_for_tr']['Min-Max Scaling']
+            st.session_state['std_sc_cols'] = st.session_state['column_mapping_for_tr']['Standard Scaling']
+            st.session_state['ohe_cols'] = st.session_state['column_mapping_for_tr']['One-Hot Encoding']
+            st.session_state['ore_cols'] = st.session_state['column_mapping_for_tr']['Ordinal Encoding']
+            st.session_state['le_cols'] = st.session_state['column_mapping_for_tr']['Label Encoding']
+            st.session_state['pst_cols'] = [col for col in df.columns if col not in (st.session_state['minmax_sc_cols'] + st.session_state['std_sc_cols'] + st.session_state['ohe_cols'] + st.session_state['ore_cols'])]
             
-            cleaned_column_names = []
+
+
+            st.session_state['cleaned_col_names'] = []
             for name in transformed_col_names:
                 if 'remainder__' in name:
                     rem = 'remainder__'
@@ -542,25 +567,23 @@ def norm_encode_feats(df):
                     rem = 'standard_scaler__'
                 else:
                     rem = ''
-                cleaned_column_names.append(name.replace(rem, ''))
+                st.session_state['cleaned_col_names'].append(name.replace(rem, ''))
 
-            st.session_state['transformed_data'] = pd.DataFrame(transformed_data, columns=cleaned_column_names)
+            st.session_state['transformed_data'] = pd.DataFrame(transformed_data, columns=st.session_state['cleaned_col_names'])
 
             for col in st.session_state['transformed_data'].columns:
-                if col in passthrough_columns:
-                    st.session_state['transformed_data'][col] = st.session_state['transformed_data'][col].astype(original_dtypes[col])
-                elif col in (st.session_state['column_mapping_for_tr']['Standard Scaling'] + st.session_state['column_mapping_for_tr']['Min-Max Scaling']):
+                if col in st.session_state['pst_cols']:
+                    st.session_state['transformed_data'][col] = st.session_state['transformed_data'][col].astype(st.session_state['org_dtypes'][col])
+                elif col in (st.session_state['minmax_sc_cols'] + st.session_state['std_sc_cols']):
                     st.session_state['transformed_data'][col] = st.session_state['transformed_data'][col].astype(float)
             st.session_state['le'] = LabelEncoder()
-            for col in st.session_state['column_mapping_for_tr']['Label Encoding']:
+            for col in st.session_state['le_cols']:
                 st.session_state['transformed_data'][col] = st.session_state['le'].fit_transform(st.session_state['transformed_data'][col])
             
             outputs = ""
             for met, columns in st.session_state['column_mapping_for_tr'].items():
                 outputs += f"Columns: {(', ').join(columns)} using {met} technique and "
             st.session_state.outputs.append(outputs[:-4]+"!")
-
-            st.session_state['transformed_data']
         except ValueError as e:
             st.error(f"Error transforming columns: {e}")
 
@@ -618,6 +641,112 @@ def handle_class_imbalane(df):
             ("Oversampling (SMOTE)", "Undersampling")
         )
 
+def train_model(df, task, target_col, algo):
+    if task == 'Classification':
+        model = classifiers[algo]
+    elif task == 'Regression':
+        model = regressors[algo]
+    x = df.drop(target_col, axis = 1)
+    y = df[target_col]
+    try:
+        model.fit(x,y)
+        return model
+    except:
+        st.error("1")
+        return None
+
+
+def model_training(df):
+    model_task = st.selectbox("Choose task for model", options = ['Classification', 'Regression'])
+    trg = st.selectbox("Choose Target Feature", options = df.columns)
+    if model_task == 'Classification':
+        algo = st.selectbox("Choose Algorithm", options = classifiers.keys())
+    elif model_task == 'Regression':
+        algo = st.selectbox("Choose Algorithm", options = regressors.keys())
+
+    if model_task and trg and algo and st.button("Train"):
+        st.session_state['model_task'] = model_task
+        st.session_state['target_col'] = trg
+        return train_model(st.session_state['df'], model_task, trg, algo)
+
+    
+classifiers = {
+    'Logistic Regression': LogisticRegression(max_iter=10000),
+    'Random Forest': RandomForestClassifier(random_state=42),
+    'Gradient Boosting': GradientBoostingClassifier(),
+    'AdaBoost': AdaBoostClassifier(),
+    'Support Vector Machine': SVC(),
+    'K-Nearest Neighbors': KNeighborsClassifier(),
+    'Naive Bayes': GaussianNB(),
+    'Decision Tree': DecisionTreeClassifier(random_state=42)
+}
+
+regressors = {
+    'Linear Regression': LinearRegression(),
+    'Ridge Regression': Ridge(),
+    'Lasso Regression': Lasso(),
+    'Random Forest': RandomForestRegressor(random_state=42),
+    'Gradient Boosting': GradientBoostingRegressor(),
+    'AdaBoost': AdaBoostRegressor(),
+    'Support Vector Regressor': SVR(),
+    'K-Nearest Neighbors': KNeighborsRegressor(),
+    'Decision Tree': DecisionTreeRegressor(random_state=42)
+}
+
+def model_testing(df, task):
+    transformed_data = st.session_state['ct'].transform(df)
+    transformed_data = pd.DataFrame(transformed_data, columns=st.session_state['cleaned_col_names'])
+
+    for col in transformed_data.columns:
+        if col in st.session_state['pst_cols']:
+            transformed_data[col] = transformed_data[col].astype(st.session_state['org_dtypes'][col])
+        elif col in (st.session_state['minmax_sc_cols'] + st.session_state['std_sc_cols']):
+            transformed_data[col] = transformed_data[col].astype(float)
+
+    for col in st.session_state['le_cols']:
+        transformed_data[col] = st.session_state['le'].transform(transformed_data[col])
+    
+    x = transformed_data.drop(st.session_state['target_col'], axis = 1)
+    y = transformed_data[st.session_state['target_col']]
+    try:
+        ypreds = st.session_state['model'].predict(x)
+        if st.session_state['model_task'] == 'Classification':
+            st.success(f"Accuracy: {accuracy_score(y.values,ypreds)*100}")
+        else:
+            st.success(f"R2 Score: {r2_score(y.values,ypreds)}")
+    except:
+        st.error("Error encountered while testing the model")
+
+prediction_code =  """
+
+def Predict(model, x):
+    
+    original_dtypes = df.dtypes.to_dict() 
+    transformed_data = st.session_state['ct'].transform(df)
+    transformed_data = pd.DataFrame(transformed_data, columns=st.session_state['cleaned_col_names'])
+
+    for col in transformed_data.columns:
+        if col in st.session_state['pst_cols']:
+            transformed_data[col] = transformed_data[col].astype(original_dtypes[col])
+        elif col in (st.session_state['minmax_sc_cols'] + st.session_state['std_sc_cols']):
+            transformed_data[col] = transformed_data[col].astype(float)
+
+    for col in st.session_state['le_cols']:
+        transformed_data[col] = st.session_state['le'].transform(transformed_data[col])
+    
+    x = transformed_data.drop(st.session_state['target_col'], axis = 1)
+    y = transformed_data[st.session_state['target_col']]
+    try:
+        ypreds = st.session_state['model'].predict(x)
+        if st.session_state['model_task'] == 'Classification':
+            st.success(f"Accuracy: {accuracy_score(y.values,ypreds)*100}")
+        else:
+            st.success(f"R2 Score: {r2_score(y.values,ypreds)}")
+    except:
+        st.error("Error encountered while testing the model")
+
+"""
+    
 
 if 'column_mapping_for_imputation' not in st.session_state:
     st.session_state['column_mapping_for_imputation'] = {}
@@ -646,8 +775,8 @@ if 'uploaded_file' not in st.session_state:
 if 'df' not in st.session_state:
     st.session_state['df'] = None
 
-if 'transformed_data' not in st.session_state:
-    st.session_state['transformed_data'] = None
+if 'cleaned_data' not in st.session_state:
+    st.session_state['cleaned_data'] = None
 
 if 'train_data' not in st.session_state:
     st.session_state['train_data'] = None
@@ -655,12 +784,47 @@ if 'train_data' not in st.session_state:
 if 'test_data' not in st.session_state:
     st.session_state['test_data'] = None
 
+if 'transformed_data' not in st.session_state:
+    st.session_state['transformed_data'] = None
+
+if 'cleaned_col_names' not in st.session_state:
+    st.session_state['cleaned_col_names'] = None
+
+if 'minmax_sc_cols' not in st.session_state:
+    st.session_state['minmax_sc_cols'] = None
+
+if 'std_sc_cols' not in st.session_state:
+    st.session_state['std_sc_cols'] = None
+
+if 'ohe_cols' not in st.session_state:
+    st.session_state['ohe_cols'] = None
+
+if 'ore_cols' not in st.session_state:
+    st.session_state['ore_cols'] = None
+
+if 'le_cols' not in st.session_state:
+    st.session_state['le_cols'] = None
+
+if 'pst_cols' not in st.session_state:
+    st.session_state['pst_cols'] = None
+
+if 'org_dtypes' not in st.session_state:
+    st.session_state['org_dtypes'] = None
+
 if 'ct' not in st.session_state:
     st.session_state['ct'] = None
 
 if 'le' not in st.session_state:
     st.session_state['le'] = None
 
+if 'model' not in st.session_state:
+    st.session_state['model'] = None
+
+if 'model_task' not in st.session_state:
+    st.session_state['model_task'] = None
+
+if 'target_col' not in st.session_state:
+    st.session_state['target_col'] = None
 # changed = False
 
 st.title("No-Code ML Model Building App")
@@ -780,14 +944,19 @@ if st.session_state['uploaded_file'] is not None:
         
         if download_cleaned_data:
             st.download_button(
-            label="Download cleaned CSV",
-            data=st.session_state['df'].to_csv(index=False).encode('utf-8'),
-            file_name='cleaned_data.csv',
-            mime='text/csv',
-        )
+                label="Download cleaned CSV",
+                data=st.session_state['df'].to_csv(index=False).encode('utf-8'),
+                file_name='cleaned_data.csv',
+                mime='text/csv',
+            )
+            st.session_state['cleaned_data'] = st.session_state['df']
                     
     if task == "Data Analysis and Visualization":
         st.subheader("Data Analysis and Visualization",divider=True)
+        st.warning("If the data was cleaned in this website in same runtime instance, then click below button to load the cleaned data or you can upload the cleaned data and rerun the environment")
+        if st.button("Load Cleaned Data in the Environment"):
+            st.session_state['df'] = st.session_state['cleaned_data']
+            update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
         st.sidebar.header("Choose Tasks")
         unique_values = st.sidebar.checkbox("Unique Values")
         EDA = st.sidebar.checkbox("EDA")
@@ -840,6 +1009,10 @@ if st.session_state['uploaded_file'] is not None:
 
         norm_encode_cols = st.sidebar.checkbox("Normalize Numerical Attributes and Encode Categorical Features")
         if norm_encode_cols:
+            st.warning("If the training data was generated in this website in same runtime instance, then click below button to load the training data or you can upload the data and rerun the environment")
+            if st.button("Load training data in environment"):
+                st.session_state['df'] = st.session_state['train_data']
+                update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
             st.subheader("Normalize and Encode Features", divider=True)
             norm_encode_feats(st.session_state['df'])
 
@@ -854,6 +1027,42 @@ if st.session_state['uploaded_file'] is not None:
             st.subheader("Dimensionality Reduction", divider=True)
             st.warning("Sorry! This feature is in development phase")
 
+    if task == "Model Building":
+        st.subheader("Model Building", divider=True)
+        phase = st.sidebar.radio(
+            "Choose the Model Phase",
+            ("Model Training", "Model Testing")
+        )
+        if phase == 'Model Training':
+            st.subheader('Model Training', divider=True)
+            st.warning("Kindly upload the clean and transformed train data and click on 'rerun' on sidebar to load the training data in the environmet")
+            st.warning("If the data was cleaned and transformed in this website in same runtime instance, then click below button to load the training data")
+            if st.button("Load training data in environment"):
+                st.session_state['df'] = st.session_state['transformed_data']
+                update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
+            st.session_state['model'] = model_training(st.session_state['df'])
+            if st.session_state['model'] is not None:
+                st.success("Model Trained")
+        if phase == 'Model Testing':
+            st.subheader('Model Testing', divider=True)
+            st.warning("Kindly upload the cleaned test data and click on 'rerun' on sidebar to load the testing data in the environmet")
+            st.warning("If the data was cleaned and test data was generated in this website in same runtime instance, then click below button to load the testing data")
+            if st.button("Load testing data in environment"):
+                st.session_state['df'] = st.session_state['test_data']
+                update_view(st.session_state['df'],df_placeholder, sum_placeholder1, sum_placeholder2, sum_placeholder3)
+            if st.button("Test Model"):
+                model_testing(st.session_state['df'],st.session_state['model_task'])
+            
+            with io.BytesIO() as buffer:
+                pickle.dump(st.session_state['model'], buffer)
+                buffer.seek(0)
+                st.download_button(
+                    label="Download Model as Pickle",
+                    data=buffer,
+                    file_name="model.pkl",
+                    mime="application/octet-stream"
+                )
+            
 
     st.subheader("Your notes", divider=True)
     user_notes = st.text_area("Take your notes here:", key="user_notes", height=200)
