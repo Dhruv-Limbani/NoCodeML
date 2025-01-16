@@ -1089,4 +1089,3 @@ if st.session_state['uploaded_file'] is not None:
             file_name="data_cleaning_notes.txt",
             mime="text/plain"
         )
-
